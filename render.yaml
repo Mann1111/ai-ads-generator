@@ -1,0 +1,17 @@
+# Render Blueprint — lets Render auto-configure this as a Docker web service
+# when you connect the repo, instead of clicking through the settings
+# manually. Free plan works fine for testing (spins down when idle, first
+# request after idle takes ~30-60s to wake up).
+services:
+  - type: web
+    name: ai-ads-generator
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: IMAGE_PROVIDER
+        value: mock
+      - key: VIDEO_PROVIDER
+        value: mock
