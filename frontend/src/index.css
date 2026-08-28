@@ -2,6 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
-  @apply bg-gray-50 text-gray-900;
+  @apply text-gray-900 antialiased transition-colors dark:text-gray-100;
+  background: radial-gradient(1200px 600px at 10% -10%, #f4f1fb 0%, transparent 60%),
+    radial-gradient(1000px 600px at 100% 0%, #fdf0f7 0%, transparent 55%), #f8f7fb;
+}
+
+html.dark body {
+  background: radial-gradient(1200px 600px at 10% -10%, rgba(111, 63, 216, 0.16) 0%, transparent 60%),
+    radial-gradient(1000px 600px at 100% 0%, rgba(236, 72, 153, 0.1) 0%, transparent 55%), #0b0a12;
+}
+
+::selection {
+  @apply bg-brand-200 dark:bg-brand-700 dark:text-white;
+}
+
+/* Any UI text that renders actual Khmer copy (angle dialogue previews)
+   should use the Khmer-aware font stack so it always shapes correctly,
+   regardless of the OS's default UI font. */
+.khmer-text {
+  @apply font-khmer;
+}
+
+/* Small utility for the pill-style scroll row of angle cards on narrow
+   screens — native scrollbar, no extra JS. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
 }

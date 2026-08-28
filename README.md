@@ -6,6 +6,13 @@ ad formats/platforms. Works across any product category (apparel, beauty,
 electronics, jewelry, home goods, food & beverage, supplements, footwear,
 toys, general e-commerce) without category-specific setup.
 
+Every video output is actually **5 video ads** — one per fixed marketing
+angle (Problem → Solution, Social Proof, Feature Highlight, Urgency/Offer,
+Lifestyle) — and every angle's on-screen dialogue (hook / body / CTA) is
+written directly in **natural Khmer**, correctly shaped (subscript
+consonants, vowel reordering) when burned into the video. See "Video ad
+angles & Khmer dialogue" below.
+
 Sold as a product through the [sleukchak.site](https://sleukchak.site) digital
 store — see `php-store-integration/` for how purchases unlock the app.
 
@@ -28,12 +35,43 @@ below.
    (minimalist, lifestyle, seasonal/promotional, UGC-style, bold sale banner).
 3. **Formats** — pick static image and/or video, and one or more aspect
    ratios (Instagram feed, Stories/Reels/TikTok, 16:9 display/YouTube, 4:5
-   feed). Every format you select is generated in the same batch.
-4. **Generate** — static images render synchronously; video ads render as
-   background jobs (the UI polls and shows progress, since real
-   video-generation APIs are slow and asynchronous).
-5. **Review & export** — preview every generated asset and download it
-   individually.
+   feed). Every format you select is generated in the same batch. Selecting
+   video shows the 5 fixed marketing angles that will be generated for
+   *each* format.
+4. **Generate** — static images render synchronously; videos render as
+   background jobs, 5 per format (the UI polls and shows progress per
+   angle, since real video-generation APIs are slow and asynchronous — and
+   a batch fans out into a lot of jobs at once, see the concurrency note
+   below).
+5. **Review & export** — results are grouped by format; each group shows the
+   static image plus its 5 angle videos (with the Khmer dialogue burned in
+   and shown as text under each clip), all individually downloadable.
+
+## Video ad angles & Khmer dialogue
+
+`src/lib/angles.js` defines 5 fixed angles, each with its own hook/body/CTA
+line written directly in Khmer (not a translated template — mixing an
+arbitrary English category string into a Khmer sentence reads as broken
+code-switching, so the angle copy stays fully Khmer regardless of what the
+user types as a product category). `src/routes/generate.js` generates one
+video per angle per selected format, so 2 formats + video output = 10
+videos in one batch.
+
+`src/providers/videoAdProvider.js`'s mock renderer burns the 3-beat dialogue
+in as timed captions using ffmpeg's `subtitles` filter (libass, shaped
+through HarfBuzz) rather than `drawtext` — `drawtext` renders glyphs in raw
+codepoint order with no complex-script shaping, which mangles Khmer
+(misplaced vowel signs, broken subscript consonants); libass shapes it
+correctly. The Khmer font (`backend/assets/fonts/NotoSansKhmer-Variable.ttf`,
+Google's Noto Sans Khmer) is bundled directly in the repo and pointed to via
+ffmpeg's `fontsdir` option, so this works with zero OS-level font setup on
+any host, Render included.
+
+A real video-generation provider should treat the angle's Khmer lines as the
+required on-screen text (or spoken voiceover script, if it generates audio)
+— `buildVideoPrompt()` in `src/lib/promptEngine.js` already folds them into
+the generation prompt verbatim, with an explicit instruction that all
+on-screen/spoken copy must stay in natural Khmer.
 
 ## Project structure
 
@@ -45,16 +83,22 @@ frontend/   React + Tailwind app implementing the step-by-step flow above
 
 Key backend files:
 
-- `src/lib/promptEngine.js` — turns (category, mode, style, format) into the
-  actual prompt text sent to a generation provider.
-- `src/lib/styles.js` / `src/lib/formats.js` — the style and format catalogs
-  shown in the UI; add/edit entries here to change what's offered.
+- `src/lib/promptEngine.js` — turns (category, mode, style, format, angle)
+  into the actual prompt text sent to a generation provider.
+- `src/lib/styles.js` / `src/lib/formats.js` / `src/lib/angles.js` — the
+  style, format, and video-angle catalogs; the styles/formats are shown in
+  the UI as pickable cards, angles are fixed (shown as info badges, not
+  user-selectable) — add/edit entries in any of them to change what's
+  offered.
 - `src/providers/imageAdProvider.js` / `src/providers/videoAdProvider.js` —
   the provider **interfaces**, each with a `Mock*Provider` implementation.
   **This is the swap point for real AI generation** (see below).
-- `src/lib/jobQueue.js` — simple in-memory async job queue used for video
+- `src/lib/jobQueue.js` — in-memory async job queue used for video
   generation, standing in for a real queue (e.g. BullMQ+Redis) or the
-  provider's own webhook.
+  provider's own webhook. Also caps how many video jobs run at once
+  (`MAX_CONCURRENT_VIDEO_JOBS`, default 3) — a batch can kick off up to
+  (formats × 5 angles) jobs simultaneously, which would otherwise try to run
+  that many ffmpeg processes at once on a small instance.
 - `src/lib/storage.js` — local-disk storage driver; swap for an S3
   implementation by changing this one module.
 - `src/lib/accessCode.js` / `src/routes/access.js` — the per-purchase access
@@ -83,11 +127,12 @@ the box with **mock providers** — no API keys required:
 - **Static images**: composited locally (product photo + styled
   background + caption) via `sharp`. Looks like a placeholder ad layout, not
   a real AI-generated scene.
-- **Video ads**: a *real*, playable `.mp4` is rendered locally via `ffmpeg` —
-  a Ken Burns pan/zoom over the generated static image with a CTA text
-  overlay in the last two seconds. It's not AI-generated video, but it is a
-  genuine working video pipeline end-to-end (upload → job queue → polling →
-  download).
+- **Video ads**: a *real*, playable `.mp4` per angle is rendered locally via
+  `ffmpeg` — a Ken Burns pan/zoom (alternating zoom-in/zoom-out by angle)
+  over the generated static image, with that angle's 3-beat Khmer dialogue
+  burned in as timed captions. It's not AI-generated video, but it is a
+  genuine working video pipeline end-to-end (upload → 5× job queue per
+  format → polling → download) with real, correctly-shaped Khmer text.
 
 ## Swapping in real AI generation
 
@@ -98,8 +143,9 @@ Both provider interfaces are intentionally small:
 async generate({ sourceImagePath, prompt, styleId, formatId, category })
   // → { filePath, publicPath, width, height, promptUsed }
 
-// VideoAdProvider
-async generate({ sourceImagePath, prompt, styleId, formatId })
+// VideoAdProvider — called once per angle (angleId is one of the 5 ids in
+// lib/angles.js; angleIndex is its position, handy for visual variation)
+async generate({ sourceImagePath, prompt, styleId, formatId, angleId, angleIndex })
   // → { filePath, publicPath, durationSeconds, width, height, promptUsed }
 ```
 
@@ -158,6 +204,64 @@ The app has a per-purchase access-code gate built in (`src/lib/accessCode.js`,
   unlimited-use). See `php-store-integration/README.md` for wiring this into
   the store's order-fulfillment flow — set the same `ACCESS_SECRET` in both
   places and a code generated by the PHP store verifies here automatically.
+
+### Paying in-app with ABA PayWay
+
+On top of the manual code entry above, buyers can also pay right inside the
+app and get unlocked automatically — no admin step, no waiting for an order
+email. This is the `AccessGate` screen's "Pay with ABA PayWay" tab, backed
+by `src/lib/abaPayway.js`, `src/lib/paymentsStore.js`, and `src/routes/payments.js`.
+
+**How it works:** the app scrapes ABA's public PayWay payment-link page for
+the KHQR session data their own checkout page uses, signs a request the same
+way their page's JS does (`sha512(request_time + aba_data + additional_fields)`),
+and gets back a KHQR string it renders as a QR image. The buyer scans it with
+their ABA Mobile app; the backend polls ABA's status endpoint every few
+seconds and, once approved, generates the same kind of access code the
+manual/store flow produces and hands it to the frontend — the app unlocks
+itself, no page reload needed.
+
+**⚠️ Read before relying on this in production:** this is not ABA's
+documented merchant API — it's reverse-engineered from their own checkout
+page's front-end JavaScript, adapted from a client-supplied integration
+spec. Two real risks come with that:
+
+- **It can break silently** if ABA changes that page's markup or field
+  names, since there's no versioned contract to depend on.
+- **ABA has previously blocked this exact style of request (HTTP 403) from
+  Hostinger's shared-hosting IP ranges** — that's documented history from
+  sleukchak.site's own store, which is why *that* store abandoned automatic
+  ABA payments for a manual QR + admin "mark paid" flow instead. This app is
+  built to run on Render, a different IP range, but that's not a guarantee
+  ABA won't block it too — the only way to know is to test
+  `POST /api/payments/create` against your real `ABA_PAYMENT_URL` once it's
+  live and watch the backend logs for a 403.
+
+**Setup:**
+
+1. In the ABA merchant portal, create a PayWay payment link (an "open
+   amount" one — where a person visiting it directly would type in their
+   own amount — works fine; the app supplies the amount itself with every
+   request, from `ACCESS_PRICE_USD`, so it doesn't depend on the link
+   having a price baked in) and copy its public URL.
+2. Set `ABA_PAYMENT_URL` (and `ABA_CLIENT_ID`, if your account needs one for
+   the status-check signature) in `backend/.env`.
+3. Leave `ABA_MOCK` unset/blank — it only matters as an override; without
+   `ABA_PAYMENT_URL` set, mock mode is already on automatically.
+4. To change the price later, just change `ACCESS_PRICE_USD` — no need to
+   touch the ABA link itself.
+
+**Testing without real credentials:** with `ABA_PAYMENT_URL` unset, the whole
+flow runs in mock mode — a fake KHQR image is generated and the payment
+auto-approves itself after ~8 seconds, so you can exercise create → poll →
+paid → unlocked end-to-end (and see the exact same UI the buyer will) before
+you have a live ABA payment link to test against. The panel shows a small
+"Test mode" badge whenever mock mode is active, so it's never mistaken for a
+real charge.
+
+If ABA's endpoint ends up blocked from wherever this is deployed, the
+"Enter code" tab (manual, store-fulfilled codes) keeps working exactly as
+before — ABA PayWay is additive, not a replacement for it.
 
 ## Notes on scaling to a full catalog
 

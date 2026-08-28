@@ -74,3 +74,15 @@ export function generateAds(payload) {
 export function getJob(jobId) {
   return request(`/api/jobs/${jobId}`);
 }
+
+export function getPaymentsConfig() {
+  return request("/api/payments/config");
+}
+
+export function createPayment() {
+  return request("/api/payments/create", { method: "POST" });
+}
+
+export function getPaymentStatus(paymentId) {
+  return request(`/api/payments/${paymentId}/status`);
+}

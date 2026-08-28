@@ -6,6 +6,8 @@ import FormatStep from "./steps/FormatStep";
 import GenerateStep from "./steps/GenerateStep";
 import ReviewStep from "./steps/ReviewStep";
 import AccessGate from "./steps/AccessGate";
+import ThemeToggle from "./components/ThemeToggle";
+import { useTheme } from "./lib/theme";
 import { getMeta, generateAds, getJob, getAccessStatus, getStoredAccessCode } from "./lib/api";
 
 const INITIAL_STATE = {
@@ -23,7 +25,8 @@ const INITIAL_STATE = {
 };
 
 export default function App() {
-  const [meta, setMeta] = useState({ styles: [], formats: [] });
+  const [theme, toggleTheme] = useTheme();
+  const [meta, setMeta] = useState({ styles: [], formats: [], angles: [] });
   const [metaError, setMetaError] = useState("");
   const [state, setState] = useState(INITIAL_STATE);
   const [jobs, setJobs] = useState({});
@@ -52,7 +55,8 @@ export default function App() {
   // Poll any in-flight video jobs every 1.5s until they finish.
   useEffect(() => {
     const pendingIds = state.results
-      .map((r) => r.videoJobId)
+      .flatMap((r) => r.videos || [])
+      .map((v) => v.videoJobId)
       .filter((id) => id && jobs[id]?.status !== "done" && jobs[id]?.status !== "failed");
 
     if (pendingIds.length === 0) return;
@@ -94,6 +98,8 @@ export default function App() {
     styleLabel: stylesById[state.style]?.label || "—",
     outputTypesLabel: state.outputTypes.map((t) => (t === "image" ? "Static image" : "Video")).join(" + "),
     formatsLabel: state.selectedFormats.map((id) => formatsById[id]?.label).join(", "),
+    includesVideo: state.outputTypes.includes("video"),
+    videoCount: state.outputTypes.includes("video") ? state.selectedFormats.length * 5 : 0,
   };
 
   const handleGenerate = async () => {
@@ -120,12 +126,12 @@ export default function App() {
   };
 
   if (unlocked === null) {
-    return <Shell />; // brief flash while checking access status; avoids a gate flicker for already-unlocked users
+    return <Shell theme={theme} toggleTheme={toggleTheme} />; // brief flash while checking access status; avoids a gate flicker for already-unlocked users
   }
 
   if (!unlocked) {
     return (
-      <Shell>
+      <Shell theme={theme} toggleTheme={toggleTheme}>
         <AccessGate onUnlocked={() => setUnlocked(true)} />
       </Shell>
     );
@@ -133,89 +139,112 @@ export default function App() {
 
   if (metaError) {
     return (
-      <Shell>
-        <p className="text-red-600">Couldn't reach the backend: {metaError}. Is it running on port 4000?</p>
+      <Shell theme={theme} toggleTheme={toggleTheme}>
+        <div className="rounded-2xl border border-red-100 bg-red-50 p-6 text-center text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+          Couldn't reach the backend: {metaError}. Is it running on port 4000?
+        </div>
       </Shell>
     );
   }
 
   return (
-    <Shell>
+    <Shell theme={theme} toggleTheme={toggleTheme}>
       <Stepper current={state.step} />
 
-      {state.step === 1 && (
-        <UploadStep onUploaded={(uploaded) => patch({ uploaded, step: 2 })} />
-      )}
+      <div
+        key={state.step}
+        className="rounded-2xl border border-gray-100 bg-white p-5 shadow-soft sm:p-8 animate-fade-up dark:border-gray-800 dark:bg-gray-900 dark:shadow-none dark:ring-1 dark:ring-white/5"
+      >
+        {state.step === 1 && <UploadStep onUploaded={(uploaded) => patch({ uploaded, step: 2 })} />}
 
-      {state.step === 2 && state.uploaded && (
-        <ModeStyleStep
-          uploaded={state.uploaded}
-          category={state.category}
-          setCategory={(category) => patch({ category })}
-          mode={state.mode}
-          setMode={(mode) => patch({ mode })}
-          addModel={state.addModel}
-          setAddModel={(addModel) => patch({ addModel })}
-          style={state.style}
-          setStyle={(style) => patch({ style })}
-          styles={meta.styles}
-        />
-      )}
+        {state.step === 2 && state.uploaded && (
+          <ModeStyleStep
+            uploaded={state.uploaded}
+            category={state.category}
+            setCategory={(category) => patch({ category })}
+            mode={state.mode}
+            setMode={(mode) => patch({ mode })}
+            addModel={state.addModel}
+            setAddModel={(addModel) => patch({ addModel })}
+            style={state.style}
+            setStyle={(style) => patch({ style })}
+            styles={meta.styles}
+          />
+        )}
 
-      {state.step === 3 && (
-        <FormatStep
-          outputTypes={state.outputTypes}
-          setOutputTypes={(fn) => patch({ outputTypes: typeof fn === "function" ? fn(state.outputTypes) : fn })}
-          formats={meta.formats}
-          selectedFormats={state.selectedFormats}
-          setSelectedFormats={(fn) =>
-            patch({ selectedFormats: typeof fn === "function" ? fn(state.selectedFormats) : fn })
-          }
-        />
-      )}
+        {state.step === 3 && (
+          <FormatStep
+            outputTypes={state.outputTypes}
+            setOutputTypes={(fn) => patch({ outputTypes: typeof fn === "function" ? fn(state.outputTypes) : fn })}
+            formats={meta.formats}
+            selectedFormats={state.selectedFormats}
+            setSelectedFormats={(fn) =>
+              patch({ selectedFormats: typeof fn === "function" ? fn(state.selectedFormats) : fn })
+            }
+            angles={meta.angles}
+          />
+        )}
 
-      {state.step === 4 && (
-        <GenerateStep summary={summary} generating={state.generating} error={state.genError} onGenerate={handleGenerate} />
-      )}
+        {state.step === 4 && (
+          <GenerateStep summary={summary} generating={state.generating} error={state.genError} onGenerate={handleGenerate} />
+        )}
 
-      {state.step === 5 && (
-        <ReviewStep results={state.results} formatsById={formatsById} jobs={jobs} onStartOver={startOver} />
-      )}
+        {state.step === 5 && (
+          <ReviewStep
+            results={state.results}
+            formatsById={formatsById}
+            jobs={jobs}
+            angles={meta.angles}
+            onStartOver={startOver}
+          />
+        )}
 
-      {state.step < 5 && (
-        <div className="mt-8 flex justify-between">
-          <button
-            onClick={() => goTo(Math.max(1, state.step - 1))}
-            disabled={state.step === 1}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-0"
-          >
-            Back
-          </button>
-          {state.step < 4 && (
+        {state.step < 5 && (
+          <div className="mt-8 flex items-center justify-between border-t border-gray-100 pt-6 dark:border-gray-800">
             <button
-              onClick={() => goTo(state.step + 1)}
-              disabled={!canProceedFromStep[state.step]}
-              className="rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => goTo(Math.max(1, state.step - 1))}
+              disabled={state.step === 1}
+              className="rounded-full px-4 py-2.5 text-sm font-semibold text-gray-500 transition hover:bg-gray-100 disabled:opacity-0 dark:text-gray-400 dark:hover:bg-gray-800"
             >
-              Continue
+              Back
             </button>
-          )}
-        </div>
-      )}
+            {state.step < 4 && (
+              <button
+                onClick={() => goTo(state.step + 1)}
+                disabled={!canProceedFromStep[state.step]}
+                className="rounded-full bg-brand-gradient px-6 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:-translate-y-0.5 hover:shadow-softLg disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+              >
+                Continue
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </Shell>
   );
 }
 
-function Shell({ children }) {
+function Shell({ children, theme, toggleTheme }) {
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-gray-200 bg-white">
-        <div className="max-w-5xl mx-auto px-6 py-4">
-          <h1 className="text-lg font-semibold">AI Ads Generator</h1>
-          <p className="text-xs text-gray-500">Upload a product photo → auto-generate static & video ads</p>
+    <div className="min-h-screen pb-16">
+      <header className="sticky top-0 z-10 border-b border-gray-100 bg-white/80 backdrop-blur-md dark:border-gray-800 dark:bg-gray-950/80">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3.5 sm:px-6">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-base font-extrabold text-white shadow-soft">
+            A
+          </span>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-base font-bold leading-tight dark:text-gray-50 sm:text-lg">AI Ads Generator</h1>
+            <p className="truncate text-[11px] text-gray-500 dark:text-gray-400 sm:text-xs">
+              Product photo → static &amp; Khmer video ads, in minutes
+            </p>
+          </div>
+          {theme && <ThemeToggle theme={theme} onToggle={toggleTheme} />}
         </div>
       </header>
-      <main className="max-w-5xl mx-auto px-6 py-8">{children}</main>
+      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">{children}</main>
+      <footer className="mx-auto mt-4 max-w-5xl px-4 text-center text-xs text-gray-400 dark:text-gray-500 sm:px-6">
+        Built for sleukchak.site · every video's on-screen dialogue is written in Khmer
+      </footer>
     </div>
   );
 }

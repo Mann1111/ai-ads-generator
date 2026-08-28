@@ -5,6 +5,7 @@ import { STORAGE_DIR } from "../lib/storage.js";
 import { buildImagePrompt, buildVideoPrompt } from "../lib/promptEngine.js";
 import { MockImageAdProvider } from "../providers/imageAdProvider.js";
 import { MockVideoAdProvider } from "../providers/videoAdProvider.js";
+import { ANGLES } from "../lib/angles.js";
 import { createJob, runJob, getJob } from "../lib/jobQueue.js";
 import { requireAccessCode } from "./access.js";
 
@@ -25,9 +26,12 @@ const videoProvider = new MockVideoAdProvider();
  * }
  *
  * Static images are generated synchronously (fast). For every requested
- * format, if 'video' was requested a video job is kicked off from the
- * generated static image and its id is returned for polling — mirroring how
- * a real video-generation API (slow, async) would be integrated.
+ * format, if 'video' was requested, 5 video jobs are kicked off — one per
+ * fixed marketing angle (see lib/angles.js) — from the generated static
+ * image, and their ids are returned for polling — mirroring how a real
+ * video-generation API (slow, async) would be integrated. A single request
+ * with, say, 2 formats + video selected produces 2 static images and 10
+ * video variants (2 formats × 5 angles).
  */
 router.post("/generate", requireAccessCode, async (req, res) => {
   const { imageId, category, mode, addModel, style, outputTypes = [], formats = [] } = req.body || {};
@@ -46,7 +50,7 @@ router.post("/generate", requireAccessCode, async (req, res) => {
     const results = [];
 
     for (const formatId of formats) {
-      const entry = { formatId, style, image: null, video: null };
+      const entry = { formatId, style, image: null, videos: [] };
 
       if (outputTypes.includes("image")) {
         const imgPrompt = buildImagePrompt({ category, mode, addModel, style, formatId });
@@ -65,24 +69,30 @@ router.post("/generate", requireAccessCode, async (req, res) => {
         // video visually matches the approved static creative); otherwise
         // from the raw upload.
         const videoSource = entry.image ? entry.image.filePath : sourceImagePath;
-        const vidPrompt = buildVideoPrompt({ category, mode, addModel, style, formatId });
 
-        const job = createJob("video", { formatId, style });
-        entry.videoJobId = job.id;
+        entry.videos = ANGLES.map((angle, angleIndex) => {
+          const vidPrompt = buildVideoPrompt({ category, mode, addModel, style, formatId, angleId: angle.id });
+          const job = createJob("video", { formatId, style, angleId: angle.id });
 
-        // Fire and don't await — client polls /api/jobs/:id. We intentionally
-        // don't block the response on this since real video providers can
-        // take much longer than a request timeout would allow.
-        runJob(job, async (onProgress) => {
-          onProgress(30);
-          const result = await videoProvider.generate({
-            sourceImagePath: videoSource,
-            prompt: vidPrompt,
-            styleId: style,
-            formatId,
+          // Fire and don't await — client polls /api/jobs/:id. We
+          // intentionally don't block the response on this since real video
+          // providers can take much longer than a request timeout would
+          // allow, and here we're kicking off up to 5 jobs per format.
+          runJob(job, async (onProgress) => {
+            onProgress(30);
+            const result = await videoProvider.generate({
+              sourceImagePath: videoSource,
+              prompt: vidPrompt,
+              styleId: style,
+              formatId,
+              angleId: angle.id,
+              angleIndex,
+            });
+            onProgress(90);
+            return result;
           });
-          onProgress(90);
-          return result;
+
+          return { angleId: angle.id, angleLabel: angle.label, videoJobId: job.id };
         });
       }
 
