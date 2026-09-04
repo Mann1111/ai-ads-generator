@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const STORAGE_DIR = path.resolve(__dirname, "../../storage");
 
 export function ensureDirs() {
-  for (const sub of ["uploads", "generated"]) {
+  for (const sub of ["uploads", "generated", "branding"]) {
     const dir = path.join(STORAGE_DIR, sub);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   }

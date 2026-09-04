@@ -36,3 +36,75 @@ html.dark body {
 .no-scrollbar {
   scrollbar-width: none;
 }
+
+/* --- ABA PayWay receipt: a light chasing around the QR frame, and a shine
+   sweep across each "accepted payment method" badge. Both pure CSS, no
+   images — plays continuously while a QR is on screen.
+
+   The rotating light lives on ::before, sized oversized and clipped by
+   overflow+border-radius on .qr-glow-ring, while the actual QR content is a
+   normal (non-rotated) child stacked above it via z-index. Rotating the
+   whole card — including the QR image inside it — was the earlier bug: the
+   code itself was visibly tilting as the animation played, which is why it
+   looked broken and could fail to scan. Only the glow layer spins now. */
+.qr-glow-ring {
+  position: relative;
+  border-radius: 20px;
+  padding: 3px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.qr-glow-ring::before {
+  content: "";
+  position: absolute;
+  inset: -60%;
+  background: conic-gradient(from 0deg, transparent 0%, transparent 62%, #a855f7 78%, #ec4899 88%, transparent 100%);
+  animation: qr-glow-spin 3.5s linear infinite;
+}
+.qr-glow-ring > * {
+  position: relative;
+  z-index: 1;
+}
+@keyframes qr-glow-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pay-method-badge {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.pay-method-badge::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 25%, rgba(255, 255, 255, 0.65) 50%, transparent 75%);
+  transform: translateX(-120%);
+  animation: pay-badge-shine 2.8s ease-in-out infinite;
+  /* Set --shine-delay inline on the .pay-method-badge element to stagger
+     each badge — a pseudo-element doesn't inherit animation-delay from an
+     inline style on its host, but it does inherit a custom property. */
+  animation-delay: var(--shine-delay, 0s);
+}
+html.dark .pay-method-badge::after {
+  background: linear-gradient(115deg, transparent 25%, rgba(255, 255, 255, 0.18) 50%, transparent 75%);
+}
+@keyframes pay-badge-shine {
+  0%,
+  15% {
+    transform: translateX(-120%);
+  }
+  55%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qr-glow-ring,
+  .pay-method-badge::after {
+    animation: none;
+  }
+}

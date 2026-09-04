@@ -244,8 +244,9 @@ spec. Two real risks come with that:
    own amount — works fine; the app supplies the amount itself with every
    request, from `ACCESS_PRICE_USD`, so it doesn't depend on the link
    having a price baked in) and copy its public URL.
-2. Set `ABA_PAYMENT_URL` (and `ABA_CLIENT_ID`, if your account needs one for
-   the status-check signature) in `backend/.env`.
+2. Set `ABA_PAYMENT_URL` in `backend/.env`. No API key / client ID is
+   needed — `client_id` comes back from ABA's own response and is used
+   as-is, exactly per the custom SOP this was built to.
 3. Leave `ABA_MOCK` unset/blank — it only matters as an override; without
    `ABA_PAYMENT_URL` set, mock mode is already on automatically.
 4. To change the price later, just change `ACCESS_PRICE_USD` — no need to
@@ -262,6 +263,37 @@ real charge.
 If ABA's endpoint ends up blocked from wherever this is deployed, the
 "Enter code" tab (manual, store-fulfilled codes) keeps working exactly as
 before — ABA PayWay is additive, not a replacement for it.
+
+### Admin panel — brand + payment-method logos
+
+The payment receipt (the branded card with the QR code) shows a brand
+name/logo and a footer of accepted-payment-method badges. Both are editable
+without touching any code, from a small admin page at `/admin` on your
+deployed site (e.g. `https://your-app.onrender.com/admin`).
+
+**Turning it on:** set `ADMIN_SECRET` in `backend/.env` (or Render's
+Environment tab) to a long random string — the page is fully disabled
+(every admin request is rejected) until this is set. This is separate from
+`ACCESS_SECRET`; buyers never see or need it. Open `/admin`, enter that
+secret once, and it's remembered for the rest of that browser tab.
+
+**What you can change:**
+
+- **Brand name** — replaces the hardcoded "AI Ads Generator" text in the
+  receipt header. `ACCESS_BRAND_NAME` in `.env` sets a fallback used only
+  until a name is saved here; the admin-panel value always wins once set.
+- **Brand logo** — replaces the plain letter tile in the header. Recommended:
+  square, at least 256×256px, PNG with a transparent background. Uploads are
+  automatically resized to fit, so it doesn't need to be pixel-perfect.
+- **Payment-method logos** — one image per method (ABA, ACLEDA, Wing,
+  TrueMoney, VISA, Mastercard, UnionPay), replacing that method's plain text
+  badge with the real logo. Recommended: a wide image, roughly 200×64px, PNG
+  with a transparent background. A method with no logo uploaded just keeps
+  showing its text badge — never a broken image.
+
+Uploaded logos are stored under `backend/storage/branding/` (created
+automatically) and served at `/assets/branding/...`, the same static-file
+pattern already used for uploaded product photos and generated ads.
 
 ## Notes on scaling to a full catalog
 

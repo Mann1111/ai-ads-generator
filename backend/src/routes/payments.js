@@ -3,21 +3,34 @@ import QRCode from "qrcode";
 import { createAbaSession, checkAbaStatus, isAbaConfigured, isMockMode } from "../lib/abaPayway.js";
 import { createPayment, getPayment, updatePayment, markPaidIfPending, expireIfPast } from "../lib/paymentsStore.js";
 import { generateAccessCode, isAccessGateEnabled } from "../lib/accessCode.js";
+import { publicSettings } from "./admin.js";
 
 const router = Router();
 
 const ACCESS_PRICE_USD = Number(process.env.ACCESS_PRICE_USD || "9");
 const ACCESS_CURRENCY = process.env.ACCESS_CURRENCY || "USD";
+const ACCESS_PRODUCT_NAME = process.env.ACCESS_PRODUCT_NAME || "AI Ads Generator — Full Access";
+// Fallback brand name when nothing has been set yet in the admin panel —
+// the admin-panel value (settings.json) always wins once one is saved.
+const ACCESS_BRAND_NAME_FALLBACK = process.env.ACCESS_BRAND_NAME || "AI Ads Generator";
 
 // Lets the frontend decide whether to show the "Pay with ABA PayWay" panel
 // at all — hidden entirely if the server has neither a real ABA payment
 // link nor mock mode explicitly usable, so there's never a dead-end button.
+// Also carries the branding (name/logo + per-payment-method logos) the admin
+// panel manages, so the receipt renders the site's own brand instead of a
+// hardcoded one.
 router.get("/payments/config", (_req, res) => {
+  const branding = publicSettings();
   res.json({
     enabled: isAbaConfigured() && isAccessGateEnabled(),
     mock: isMockMode(),
     amount: ACCESS_PRICE_USD,
     currency: ACCESS_CURRENCY,
+    productName: ACCESS_PRODUCT_NAME,
+    brandName: branding.brandName || ACCESS_BRAND_NAME_FALLBACK,
+    brandLogoUrl: branding.brandLogoUrl,
+    paymentLogos: branding.paymentLogos,
   });
 });
 
@@ -32,15 +45,20 @@ router.post("/payments/create", async (_req, res) => {
   const payment = createPayment({ amount: ACCESS_PRICE_USD, currency: ACCESS_CURRENCY });
 
   try {
-    const session = await createAbaSession({
-      orderId: payment.orderId,
-      amount: payment.amount,
-      currency: payment.currency,
-    });
+    const session = await createAbaSession({ amount: payment.amount });
     const qrImage = await QRCode.toDataURL(session.qrString, { margin: 1, width: 320 });
 
+    // Per the spec: device_id, client_id, request_time and hash are exactly
+    // what's needed to poll status later — without all four it can't be
+    // checked again.
     const updated = updatePayment(payment.paymentId, {
-      aba: { deviceId: session.deviceId, requestTime: session.requestTime, abaData: session.abaData || null },
+      aba: {
+        deviceId: session.deviceId,
+        clientId: session.clientId,
+        requestTime: session.requestTime,
+        hash: session.hash,
+        tranId: session.tranId || null,
+      },
     });
 
     res.json({
@@ -76,9 +94,8 @@ router.get("/payments/:paymentId/status", async (req, res) => {
   try {
     const action = await checkAbaStatus({
       deviceId: payment.aba?.deviceId,
+      clientId: payment.aba?.clientId,
       requestTime: payment.aba?.requestTime,
-      abaData: payment.aba?.abaData,
-      orderId: payment.orderId,
       createdAt: payment.createdAt,
     });
 

@@ -5,6 +5,7 @@ import { Spinner, Badge } from "../components/ui";
 export default function AccessGate({ onUnlocked }) {
   const [abaConfig, setAbaConfig] = useState(null); // null = still loading
   const [tab, setTab] = useState("pay"); // "pay" | "code"
+  const [session, setSession] = useState(null); // set once a QR payment is created — switches to the full receipt view
 
   useEffect(() => {
     getPaymentsConfig()
@@ -16,6 +17,14 @@ export default function AccessGate({ onUnlocked }) {
   }, []);
 
   const showTabs = abaConfig?.enabled;
+
+  // Once a payment session exists, the QR takes over the whole card — a
+  // dedicated "receipt" layout (brand header, product + amount, QR, and the
+  // accepted-payment-methods footer) rather than living inside the plain
+  // tabbed card below.
+  if (session) {
+    return <PaymentReceipt config={abaConfig} session={session} onUnlocked={onUnlocked} onExit={() => setSession(null)} />;
+  }
 
   return (
     <div className="mx-auto mt-10 max-w-sm rounded-2xl border border-gray-100 bg-white p-6 shadow-soft sm:mt-16 sm:p-8 dark:border-gray-800 dark:bg-gray-900 dark:shadow-none dark:ring-1 dark:ring-white/5">
@@ -41,9 +50,7 @@ export default function AccessGate({ onUnlocked }) {
       )}
 
       <div className="mt-6">
-        {tab === "pay" && showTabs && (
-          <AbaPayPanel config={abaConfig} onUnlocked={onUnlocked} />
-        )}
+        {tab === "pay" && showTabs && <AbaPayStart config={abaConfig} onStarted={setSession} />}
         {tab === "code" && <CodePanel onUnlocked={onUnlocked} />}
       </div>
 
@@ -118,37 +125,65 @@ function CodePanel({ onUnlocked }) {
   );
 }
 
-// --- ABA PayWay: create a QR session, poll until paid ----------------------
+// --- ABA PayWay: the "start" button shown inside the plain card -----------
 
-const POLL_MS = 3000;
-
-function AbaPayPanel({ config, onUnlocked }) {
-  const [payment, setPayment] = useState(null); // { paymentId, qrImage, expiresAt, mock }
+function AbaPayStart({ config, onStarted }) {
   const [starting, setStarting] = useState(false);
-  const [status, setStatus] = useState("idle"); // idle | pending | paid | expired | failed | error
   const [error, setError] = useState("");
-  const [now, setNow] = useState(Date.now());
-  const pollRef = useRef(null);
-  const tickRef = useRef(null);
 
   const start = async () => {
     setStarting(true);
     setError("");
-    setStatus("idle");
     try {
       const p = await createPayment();
-      setPayment(p);
-      setStatus("pending");
+      onStarted(p);
     } catch (e) {
       setError(e.message);
-      setStatus("error");
     } finally {
       setStarting(false);
     }
   };
 
+  return (
+    <div className="text-center">
+      <p className="mb-4 text-2xl font-extrabold text-gray-900 dark:text-gray-50">
+        ${config.amount}
+        <span className="text-sm font-medium text-gray-400 dark:text-gray-500"> {config.currency}</span>
+      </p>
+      {error && <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
+      <button
+        onClick={start}
+        disabled={starting}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-gradient px-4 py-3 text-sm font-semibold text-white shadow-soft transition hover:-translate-y-0.5 hover:shadow-softLg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+      >
+        {starting && <Spinner className="h-4 w-4 text-white" />}
+        {starting ? "Preparing QR…" : "Pay with ABA PayWay"}
+      </button>
+      {config.mock && <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">Test mode — no real payment is made.</p>}
+    </div>
+  );
+}
+
+// --- ABA PayWay receipt: brand header, product + amount, glowing QR frame,
+// and a footer row of accepted payment methods — takes over the whole card
+// once a QR session exists, polling until it's paid. ------------------------
+
+const POLL_MS = 3000;
+// Fallback list/order if the server response is ever missing paymentMethods
+// (e.g. an older cached /api/payments/config) — normally config.paymentMethods
+// (from the admin-managed settings) is used instead.
+const DEFAULT_PAYMENT_METHODS = ["ABA", "ACLEDA", "Wing", "TrueMoney", "VISA", "Mastercard", "UnionPay"];
+
+function PaymentReceipt({ config, session, onUnlocked, onExit }) {
+  const [payment, setPayment] = useState(session);
+  const [status, setStatus] = useState("pending"); // pending | paid | expired | failed | error
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(Date.now());
+  const pollRef = useRef(null);
+  const tickRef = useRef(null);
+
   useEffect(() => {
-    if (status !== "pending" || !payment) return;
+    if (status !== "pending") return;
 
     const poll = async () => {
       try {
@@ -160,7 +195,6 @@ function AbaPayPanel({ config, onUnlocked }) {
         } else if (result.status === "expired" || result.status === "failed") {
           setStatus(result.status);
         }
-        // "pending" (with or without a transient warning) — keep polling.
       } catch (e) {
         setError(e.message);
         setStatus("error");
@@ -175,77 +209,130 @@ function AbaPayPanel({ config, onUnlocked }) {
       clearInterval(tickRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, payment?.paymentId]);
+  }, [status, payment.paymentId]);
 
-  if (!payment) {
-    return (
-      <div className="text-center">
-        <p className="mb-4 text-2xl font-extrabold text-gray-900 dark:text-gray-50">
-          ${config.amount}
-          <span className="text-sm font-medium text-gray-400 dark:text-gray-500"> {config.currency}</span>
-        </p>
-        {error && <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
-        <button
-          onClick={start}
-          disabled={starting}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-gradient px-4 py-3 text-sm font-semibold text-white shadow-soft transition hover:-translate-y-0.5 hover:shadow-softLg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
-        >
-          {starting && <Spinner className="h-4 w-4 text-white" />}
-          {starting ? "Preparing QR…" : "Pay with ABA PayWay"}
-        </button>
-        {config.mock && (
-          <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">Test mode — no real payment is made.</p>
-        )}
-      </div>
-    );
-  }
+  const retry = async () => {
+    setError("");
+    setStatus("pending");
+    try {
+      const p = await createPayment();
+      setPayment(p);
+    } catch (e) {
+      setError(e.message);
+      setStatus("error");
+    }
+  };
 
   const secondsLeft = Math.max(0, Math.round((payment.expiresAt - now) / 1000));
   const mins = Math.floor(secondsLeft / 60);
   const secs = String(secondsLeft % 60).padStart(2, "0");
+  const brandName = config.brandName || "AI Ads Generator";
+  const paymentMethods = config.paymentMethods?.length ? config.paymentMethods : DEFAULT_PAYMENT_METHODS;
+  const paymentLogos = config.paymentLogos || {};
 
   return (
-    <div className="text-center">
-      {status === "pending" && (
-        <>
-          <div className="mx-auto mb-3 w-fit rounded-xl border border-gray-100 bg-white p-2 dark:border-gray-800">
-            <img src={payment.qrImage} alt="ABA PayWay KHQR code" className="h-40 w-40" />
-          </div>
-          <div className="mb-1 flex items-center justify-center gap-2">
-            <Spinner className="h-3.5 w-3.5 text-brand-500" />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Waiting for payment…</span>
-          </div>
-          <p className="text-xs text-gray-400 dark:text-gray-500">
-            Scan with your ABA Mobile app · expires in {mins}:{secs}
-          </p>
-          {payment.mock && (
-            <p className="mt-2">
-              <Badge tone="brand">Test mode — auto-approves in ~8s</Badge>
-            </p>
+    <div className="mx-auto mt-10 max-w-sm overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-soft sm:mt-16 dark:border-gray-800 dark:bg-gray-900 dark:shadow-none dark:ring-1 dark:ring-white/5">
+      {/* Brand header — name/logo come from the admin-managed settings
+          (/api/payments/config), falling back to a generic name + initial
+          tile until an admin sets a real brand on the /admin page. */}
+      <div className="relative flex items-center gap-3 bg-brand-gradient px-5 py-4 text-white">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/15 text-base font-extrabold ring-1 ring-white/25">
+          {config.brandLogoUrl ? (
+            <img src={config.brandLogoUrl} alt={`${brandName} logo`} className="h-full w-full object-contain bg-white" />
+          ) : (
+            brandName.trim().charAt(0).toUpperCase()
           )}
-        </>
-      )}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold leading-tight">{brandName}</p>
+          <p className="text-[11px] leading-tight text-white/80">Secure Digital Payment</p>
+        </div>
+        <button
+          onClick={onExit}
+          aria-label="Close"
+          className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/80 transition hover:bg-white/15 hover:text-white"
+        >
+          ✕
+        </button>
+      </div>
 
-      {status === "expired" && (
-        <>
-          <p className="mb-3 text-sm text-gray-600 dark:text-gray-300">This QR code expired before payment was completed.</p>
-          <RetryButton onClick={() => setPayment(null)} />
-        </>
-      )}
+      <div className="px-5 py-5 sm:px-7">
+        {/* Product + amount */}
+        <p className="text-center text-sm font-medium text-gray-500 dark:text-gray-400">{config.productName}</p>
+        <p className="mt-1 text-center text-3xl font-extrabold text-gray-900 dark:text-gray-50">
+          ${payment.amount}
+          <span className="ml-1 text-sm font-semibold text-gray-400 dark:text-gray-500">{payment.currency}</span>
+        </p>
 
-      {status === "failed" && (
-        <>
-          <p className="mb-3 text-sm text-red-600 dark:text-red-400">The payment wasn't completed. Nothing was charged.</p>
-          <RetryButton onClick={() => setPayment(null)} />
-        </>
-      )}
+        <div className="mt-5 flex flex-col items-center">
+          {status === "pending" && (
+            <>
+              <div className="qr-glow-ring">
+                <div className="rounded-[17px] bg-white p-3 dark:bg-gray-950">
+                  <img src={payment.qrImage} alt="ABA PayWay KHQR code" className="h-40 w-40" />
+                </div>
+              </div>
+              <div className="mt-4 flex items-center justify-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Waiting for payment confirmation</span>
+              </div>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                Scan this KHQR code using your ABA Mobile app or supported banking app · expires in {mins}:{secs}
+              </p>
+              {payment.mock && (
+                <p className="mt-2">
+                  <Badge tone="brand">Test mode — auto-approves in ~8s</Badge>
+                </p>
+              )}
+            </>
+          )}
 
-      {status === "error" && (
-        <>
-          <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>
-          <RetryButton onClick={() => setPayment(null)} />
-        </>
-      )}
+          {status === "expired" && (
+            <div className="w-full text-center">
+              <p className="mb-3 text-sm text-gray-600 dark:text-gray-300">This QR code expired before payment was completed.</p>
+              <RetryButton onClick={retry} />
+            </div>
+          )}
+
+          {status === "failed" && (
+            <div className="w-full text-center">
+              <p className="mb-3 text-sm text-red-600 dark:text-red-400">The payment wasn't completed. Nothing was charged.</p>
+              <RetryButton onClick={retry} />
+            </div>
+          )}
+
+          {status === "error" && (
+            <div className="w-full text-center">
+              <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>
+              <RetryButton onClick={retry} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Accepted payment methods footer */}
+      <div className="border-t border-gray-100 bg-gray-50/70 px-5 py-4 dark:border-gray-800 dark:bg-gray-800/40">
+        <p className="mb-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+          Accepted payment methods
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          {paymentMethods.map((name, i) => {
+            const logoUrl = paymentLogos[name];
+            return (
+              <span
+                key={name}
+                className="pay-method-badge flex items-center rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                style={{ "--shine-delay": `${i * 0.35}s` }}
+              >
+                {logoUrl ? <img src={logoUrl} alt={name} className="h-4 max-w-[3.25rem] object-contain" /> : name}
+              </span>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

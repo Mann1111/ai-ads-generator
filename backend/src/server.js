@@ -8,6 +8,7 @@ import generateRoutes from "./routes/generate.js";
 import metaRoutes from "./routes/meta.js";
 import accessRoutes from "./routes/access.js";
 import paymentsRoutes from "./routes/payments.js";
+import adminRoutes from "./routes/admin.js";
 
 ensureDirs();
 
@@ -26,6 +27,7 @@ app.use("/api", generateRoutes);
 app.use("/api", metaRoutes);
 app.use("/api", accessRoutes);
 app.use("/api", paymentsRoutes);
+app.use("/api", adminRoutes);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
