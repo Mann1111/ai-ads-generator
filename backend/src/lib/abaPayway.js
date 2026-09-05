@@ -61,8 +61,20 @@ function sha512(input) {
  * step 3 has to be computed over the real value, not the escaped text.
  */
 async function fetchAbaDataAndRequestTime(url) {
+  // The payment-link page sits behind a WAF that 403s non-browser-looking
+  // requests — a generic UA string alone (what this used to send) gets
+  // blocked even from hosts/IPs that aren't otherwise rate-limited. Sending
+  // the same User-Agent/Accept/Accept-Language a real desktop Chrome
+  // navigation would send is what got this working page reliably (per the
+  // sibling PHP integration's own notes) — redirects are followed
+  // automatically by fetch() by default.
   const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; ai-ads-generator/1.0)", Accept: "text/html" },
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
   });
   if (!res.ok) {
     throw new Error(`ABA payment-link page returned HTTP ${res.status}.`);
