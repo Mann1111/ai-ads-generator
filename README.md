@@ -295,6 +295,26 @@ Uploaded logos are stored under `backend/storage/branding/` (created
 automatically) and served at `/assets/branding/...`, the same static-file
 pattern already used for uploaded product photos and generated ads.
 
+### Store proxy — powering sleukchak.site's main-store ABA checkout too
+
+ABA blocks requests from Hostinger's shared-hosting IPs, so sleukchak.site's
+main PHP store (`checkout.php`) can't call ABA directly to auto-generate a
+QR for its own orders. This app already has a working, non-blocked
+connection to ABA (via `ABA_PAYMENT_URL` above) — so the PHP store's
+`includes/aba_payway.php` calls two routes here instead of ABA itself:
+
+- `POST /api/store-proxy/create-session` — `{ amount }` → a fresh KHQR
+  session (same shape `createAbaSession()` already returns internally).
+- `POST /api/store-proxy/check-status` — `{ deviceId, clientId, requestTime }`
+  → `{ action: "approved" | "pending" | "failed" }`.
+
+Both require an `x-store-proxy-secret` header matching `STORE_PROXY_SECRET`
+(see `.env.example`) — fully disabled (503 on every request) until that's
+set. Set the exact same value as `STORE_PROXY_SECRET` in the PHP store's
+`config.php`. This has nothing to do with this app's own purchase flow
+(`/api/payments/*`) — it's a second, independent caller of the same
+underlying ABA connection.
+
 ## Notes on scaling to a full catalog
 
 The generate endpoint already accepts multiple `formats` per request and

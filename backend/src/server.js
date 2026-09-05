@@ -9,6 +9,7 @@ import metaRoutes from "./routes/meta.js";
 import accessRoutes from "./routes/access.js";
 import paymentsRoutes from "./routes/payments.js";
 import adminRoutes from "./routes/admin.js";
+import storeProxyRoutes from "./routes/storeProxy.js";
 
 ensureDirs();
 
@@ -28,6 +29,7 @@ app.use("/api", metaRoutes);
 app.use("/api", accessRoutes);
 app.use("/api", paymentsRoutes);
 app.use("/api", adminRoutes);
+app.use("/api", storeProxyRoutes);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
